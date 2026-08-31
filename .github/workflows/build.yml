@@ -143,7 +143,8 @@ jobs:
             7z x -oneb neb.pkg
             cp neb/nebula.exe      src-tauri/resources/win/nebula.exe
             cp neb/nebula-cert.exe src-tauri/binaries/nebula-cert-x86_64-pc-windows-msvc.exe
-            find neb -iname wintun.dll -path '*amd64*' -print -exec cp {} src-tauri/resources/win/wintun.dll \;
+            cp neb/dist/windows/wintun/bin/amd64/wintun.dll src-tauri/resources/win/wintun.dll
+            cp -r neb/dist src-tauri/resources/win/dist   # tauri bundles the whole wintun dist (LICENSE.txt etc.)
           fi
 
       # scripts/inject-vite-mesh-base.mjs (beforeBuildCommand) reads
@@ -201,7 +202,7 @@ jobs:
           chmod +x src-tauri/binaries/nebula-cert-*-apple-darwin src-tauri/installer/mac/*.sh src-tauri/resources/mac/nebula || true
           # ensure the bundled cert stays executable (the +x-strip class of bug)
           chmod +x "target/release/bundle/macos/MSpanel.app/Contents/MacOS/nebula-cert" || true
-          chmod +x "src-tauri/target/release/bundle/macos/MSpanel.app/Contents/MacOS/nebula-cert" || true
+          chmod +x "target/release/bundle/macos/MSpanel.app/Contents/MacOS/nebula-cert" || true
           bash src-tauri/installer/mac/build-pkg-unsigned.sh
 
       # Stage ONLY what the droplet needs. Explicitly NO .sig files — the
@@ -214,9 +215,9 @@ jobs:
           echo "${{ needs.gate.outputs.version }}" > stage/version.txt
           echo "${{ needs.gate.outputs.src_sha }}" > stage/src_sha.txt
           if [ "${{ matrix.os }}" = "windows-latest" ]; then
-            cp src-tauri/target/release/bundle/nsis/*-setup.exe stage/
+            cp target/release/bundle/nsis/*-setup.exe stage/
           else
-            cp src-tauri/target/release/bundle/macos/MSpanel.app.tar.gz stage/
+            cp target/release/bundle/macos/MSpanel.app.tar.gz stage/
             cp "$HOME/Desktop/GenerisBrain-Installer-unsigned.pkg" stage/MSpanel-macos.pkg
           fi
           ls -la stage/
