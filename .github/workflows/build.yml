@@ -97,7 +97,7 @@ jobs:
           - os: windows-latest
             neb_asset: nebula-windows-amd64.zip
           - os: macos-latest
-            neb_asset: nebula-darwin.tar.gz
+            neb_asset: nebula-darwin.zip
     runs-on: ${{ matrix.os }}
     steps:
       # Build the EXACT commit the gate scanned.
@@ -133,7 +133,7 @@ jobs:
           url="https://github.com/slackhq/nebula/releases/download/v${NEBULA_VERSION}/${{ matrix.neb_asset }}"
           curl -fsSL -o neb.pkg "$url"
           if [ "${{ matrix.os }}" = "macos-latest" ]; then
-            tar -xzf neb.pkg
+            unzip -o neb.pkg
             cp nebula      src-tauri/resources/mac/nebula
             # nebula's darwin build is a universal binary — same file for both triples
             cp nebula-cert src-tauri/binaries/nebula-cert-aarch64-apple-darwin
