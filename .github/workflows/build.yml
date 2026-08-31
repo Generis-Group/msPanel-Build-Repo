@@ -55,7 +55,7 @@ jobs:
         with:
           repository: Generis-Group/Agentic-OS
           ref: app-updater
-          token: ${{ secrets.SOURCE_TOKEN }}
+          ssh-key: ${{ secrets.SOURCE_DEPLOY_KEY }}
           fetch-depth: 0
       - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
         with:
@@ -112,7 +112,7 @@ jobs:
         with:
           repository: Generis-Group/Agentic-OS
           ref: ${{ needs.gate.outputs.src_sha }}
-          token: ${{ secrets.SOURCE_TOKEN }}
+          ssh-key: ${{ secrets.SOURCE_DEPLOY_KEY }}
 
       - uses: pnpm/action-setup@a7487c7e89a18df4991f7f222e4898a00d66ddda # v4.1.0
         with:
