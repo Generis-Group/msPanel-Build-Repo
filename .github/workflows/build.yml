@@ -57,13 +57,6 @@ jobs:
           ref: app-updater
           ssh-key: ${{ secrets.SOURCE_DEPLOY_KEY }}
           fetch-depth: 0
-      - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
-        with:
-          python-version: '3.12'
-      # Same author-identifying-token scan the source repo gates on — a build
-      # must not ship a username / mesh IP / machine path.
-      - name: Author-identifying token scan
-        run: python scripts/scrub_gate.py
       - id: decide
         shell: bash
         run: |
