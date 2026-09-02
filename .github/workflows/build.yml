@@ -9,7 +9,7 @@
 #
 # SECURITY MODEL (do not weaken):
 #   - Secrets in THIS repo: SOURCE_TOKEN (fine-grained PAT, Agentic-OS only,
-#     Contents:READ only), GENERIS_DESKTOP_SECRET, GENERIS_MESH_ENDPOINTS.
+#     Contents:READ only), GENERIS_DESKTOP_SECRET.
 #     Nothing else. Never a broad/write token, never the updater signing key.
 #   - The real updater signing key NEVER enters CI. Tauri refuses to build
 #     with createUpdaterArtifacts and no key, so each run generates a
@@ -23,7 +23,7 @@ name: build-harness
 
 on:
   push:
-    branches: ['main']
+    branches: ['main', 'fix/mesh-strip-harness']   # TEMP: branch shakeout; drop before merge
   schedule:
     # GitHub cron is UTC with no DST. Fire at both 03:00 and 04:00 UTC; the
     # gate job's DST guard lets through only the one that is 23:00 ET.
@@ -37,9 +37,6 @@ permissions:
 concurrency:
   group: build-harness
   cancel-in-progress: false
-
-env:
-  NEBULA_VERSION: '1.10.3'
 
 jobs:
   gate:
@@ -95,9 +92,7 @@ jobs:
       matrix:
         include:
           - os: windows-latest
-            neb_asset: nebula-windows-amd64.zip
           - os: macos-latest
-            neb_asset: nebula-darwin.zip
     runs-on: ${{ matrix.os }}
     steps:
       # Build the EXACT commit the gate scanned.
@@ -121,39 +116,6 @@ jobs:
       - uses: Swatinem/rust-cache@98c8021b550208e191a6a3145459bfc9fb29c4c0 # v2.8.0
         with:
           workspaces: ./src-tauri -> target
-
-      # The nebula daemon + nebula-cert + wintun are gitignored (vendored, ~90MB),
-      # so CI pulls them from the pinned slackhq/nebula release into the exact
-      # paths the bundle expects (externalBin binaries/nebula-cert + resources/).
-      - name: Fetch vendored nebula binaries
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p src-tauri/binaries src-tauri/resources/mac src-tauri/resources/win
-          url="https://github.com/slackhq/nebula/releases/download/v${NEBULA_VERSION}/${{ matrix.neb_asset }}"
-          curl -fsSL -o neb.pkg "$url"
-          if [ "${{ matrix.os }}" = "macos-latest" ]; then
-            unzip -o neb.pkg
-            cp nebula      src-tauri/resources/mac/nebula
-            # nebula's darwin build is a universal binary — same file for both triples
-            cp nebula-cert src-tauri/binaries/nebula-cert-aarch64-apple-darwin
-            cp nebula-cert src-tauri/binaries/nebula-cert-x86_64-apple-darwin
-            chmod +x src-tauri/resources/mac/nebula src-tauri/binaries/nebula-cert-*-apple-darwin
-          else
-            7z x -oneb neb.pkg
-            cp neb/nebula.exe      src-tauri/resources/win/nebula.exe
-            cp neb/nebula-cert.exe src-tauri/binaries/nebula-cert-x86_64-pc-windows-msvc.exe
-            cp neb/dist/windows/wintun/bin/amd64/wintun.dll src-tauri/resources/win/wintun.dll
-            cp -r neb/dist src-tauri/resources/win/dist   # tauri bundles the whole wintun dist (LICENSE.txt etc.)
-          fi
-
-      # scripts/inject-vite-mesh-base.mjs (beforeBuildCommand) reads
-      # ~/.generis_mesh_endpoints (KEY=VALUE lines) — verified in source.
-      - name: Provide mesh endpoints
-        shell: bash
-        env:
-          GENERIS_MESH_ENDPOINTS: ${{ secrets.GENERIS_MESH_ENDPOINTS }}
-        run: printf '%s\n' "$GENERIS_MESH_ENDPOINTS" > "$HOME/.generis_mesh_endpoints"
 
       - name: Stamp build version
         shell: bash
@@ -187,23 +149,9 @@ jobs:
           GENERIS_DESKTOP_SECRET: ${{ secrets.GENERIS_DESKTOP_SECRET }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ runner.temp }}/throwaway.key
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ''
+        # Emits MSpanel.app + the updater bundle MSpanel.app.tar.gz (+ .sig).
+        # The old mesh LaunchDaemon .pkg is gone with the mesh strip.
         run: pnpm tauri build --bundles app
-
-      # The fresh-install macOS .pkg (mesh LaunchDaemon + app) is built by a
-      # custom script, NOT tauri build (which emits .app + updater .app.tar.gz).
-      - name: Build macOS .pkg installer
-        if: matrix.os == 'macos-latest'
-        shell: bash
-        env:
-          GENERIS_DESKTOP_SECRET: ${{ secrets.GENERIS_DESKTOP_SECRET }}
-        run: |
-          set -euo pipefail
-          mkdir -p "$HOME/Desktop"
-          chmod +x src-tauri/binaries/nebula-cert-*-apple-darwin src-tauri/installer/mac/*.sh src-tauri/resources/mac/nebula || true
-          # ensure the bundled cert stays executable (the +x-strip class of bug)
-          chmod +x "target/release/bundle/macos/MSpanel.app/Contents/MacOS/nebula-cert" || true
-          chmod +x "target/release/bundle/macos/MSpanel.app/Contents/MacOS/nebula-cert" || true
-          bash src-tauri/installer/mac/build-pkg-unsigned.sh
 
       # Stage ONLY what the droplet needs. Explicitly NO .sig files — the
       # throwaway-key signatures must never leave the runner.
@@ -218,7 +166,6 @@ jobs:
             cp target/release/bundle/nsis/*-setup.exe stage/
           else
             cp target/release/bundle/macos/MSpanel.app.tar.gz stage/
-            cp "$HOME/Desktop/GenerisBrain-Installer-unsigned.pkg" stage/MSpanel-macos.pkg
           fi
           ls -la stage/
 
