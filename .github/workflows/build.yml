@@ -23,7 +23,7 @@ name: build-harness
 
 on:
   push:
-    branches: ['main', 'fix/mesh-strip-harness']   # TEMP: branch shakeout; drop before merge
+    branches: ['main']
   schedule:
     # GitHub cron is UTC with no DST. Fire at both 03:00 and 04:00 UTC; the
     # gate job's DST guard lets through only the one that is 23:00 ET.
