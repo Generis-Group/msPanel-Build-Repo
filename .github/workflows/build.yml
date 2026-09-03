@@ -1,7 +1,7 @@
 # MSpanel build harness — PUBLIC repo, PRIVATE source.
 #
 # This repo holds NO application source. On trigger it clones the private
-# Generis-Group/Agentic-OS repo (branch app-updater) with a minimal read-only
+# Generis-Group/Agentic-OS repo (branch agent/secure-build) with a minimal read-only
 # token, builds the Tauri desktop app for Windows + macOS, and uploads the
 # UNSIGNED installers + updater bundles as Actions artifacts. The droplet
 # pulls those artifacts, signs the updater bundles with the key that lives
@@ -51,7 +51,7 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           repository: Generis-Group/Agentic-OS
-          ref: app-updater
+          ref: agent/secure-build
           ssh-key: ${{ secrets.SOURCE_DEPLOY_KEY }}
           fetch-depth: 0
       - id: decide
