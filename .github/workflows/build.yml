@@ -11,7 +11,7 @@
 # feeds updater.json) and FAT (windows-bundle-fat / macos-bundle-fat, the
 # website's Get-the-app installers). FAT artefacts carry the pinned local-brain
 # runtime (scripts/runtime/pins.json in the source repo); every download is
-# sha256-verified in CI and again by the app.
+# sha256-verified in CI and again by the app. First fat run: 34168511755.
 #
 # SECURITY MODEL (do not weaken):
 #   - Secrets in THIS repo: SOURCE_TOKEN (fine-grained PAT, Agentic-OS only,
