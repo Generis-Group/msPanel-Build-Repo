@@ -421,6 +421,19 @@ jobs:
       - name: Verify runtime tree
         run: python scripts/runtime/fetch_runtime.py --verify-only brain-runtime
 
+      # The launchers install.sh writes into ~/.generis-brain/bin are the hot
+      # path -- ollama-up runs on every memsom MCP spawn and every memsom hook
+      # spawn -- so they get their own gate, inside the target rootfs where /proc
+      # and the pid allocator behave like the user's distro rather than the
+      # runner's. The tests extract the launcher bodies out of install.sh itself,
+      # so a rename or a rewrite fails here instead of on a user's machine after
+      # their next `wsl --shutdown`.
+      - name: Launcher regression tests (Debian trixie)
+        run: |
+          set -euo pipefail
+          docker run --rm -v "$PWD/scripts/wsl:/scripts:ro" debian:trixie-slim \
+            bash /scripts/test_launchers.sh /scripts/install.sh
+
       - name: Assemble the tarball tree
         run: |
           set -euo pipefail
