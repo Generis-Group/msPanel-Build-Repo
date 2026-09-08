@@ -26,7 +26,8 @@
 # website's "Windows + WSL2" install command. It builds no app, so it is not a
 # matrix row; its flavor.txt says "wsl", not "fat". First linux-wsl run:
 # 34199310751 - 4586 files / 561 MB unpacked, a 355 MB tarball, ~4 min, and the
-# ldd sweep clean on 34 ELFs inside debian:trixie-slim.
+# ldd sweep clean on 34 ELFs inside debian:trixie-slim. Note the leg needs no
+# frontend or Rust build, so it stays green when an app leg does not.
 #
 # SECURITY MODEL (do not weaken):
 #   - Secrets in THIS repo: SOURCE_TOKEN (fine-grained PAT, Agentic-OS only,
