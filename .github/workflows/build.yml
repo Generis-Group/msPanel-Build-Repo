@@ -434,6 +434,13 @@ jobs:
           docker run --rm -v "$PWD/scripts/wsl:/scripts:ro" debian:trixie-slim \
             bash /scripts/test_launchers.sh /scripts/install.sh
 
+      # The release-feed parser inside generis-brain-update is the only thing
+      # between a GitHub feed and a pip install on a user's machine. Runs on the
+      # runner's python rather than in the container, because trixie-slim has no
+      # python3 - which is the whole reason the payload ships its own.
+      - name: Updater feed-parser tests
+        run: python scripts/wsl/test_update_feed.py
+
       - name: Assemble the tarball tree
         run: |
           set -euo pipefail
