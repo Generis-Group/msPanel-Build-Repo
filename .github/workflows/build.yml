@@ -21,6 +21,10 @@
 # Both mac legs gate on `codesign --verify --deep --strict` of the app inside
 # the FINAL artefact (tar.gz / dmg), and the fat leg re-verifies the runtime
 # manifest inside the sealed bundle. Since 0.29.0 (2026-09-08).
+# A third, standalone leg (linux-wsl) builds GenerisBrain-linux-x64-wsl.tar.gz:
+# the same pinned runtime for linux plus scripts/wsl/install.sh, for the
+# website's "Windows + WSL2" install command. It builds no app, so it is not a
+# matrix row; its flavor.txt says "wsl", not "fat".
 #
 # SECURITY MODEL (do not weaken):
 #   - Secrets in THIS repo: SOURCE_TOKEN (fine-grained PAT, Agentic-OS only,
@@ -343,4 +347,108 @@ jobs:
           name: ${{ matrix.rt_os == 'windows' && 'windows-bundle-fat' || matrix.rt_os == 'macos' && 'macos-bundle-fat' || matrix.os == 'windows-latest' && 'windows-bundle' || 'macos-bundle' }}
           path: stage/
           retention-days: ${{ matrix.flavor == 'fat' && 3 || 14 }}
+          if-no-files-found: error
+
+  # ---- WSL2 runtime payload. NOT a Tauri build: a standalone job, deliberately
+  # not a fifth row of the matrix above. Three reasons, all of them traps:
+  #   * the artifact-name ternary at the end of `build` falls through to
+  #     'macos-bundle' for an unhandled rt_os, so a new row would upload as the
+  #     mac slim artefact and clobber it - green CI, wrong bytes on the droplet;
+  #   * the 200 MB stage gate globs only -fat-setup.exe / -fat.dmg and asserts
+  #     on anything else, so a .tar.gz would fail it;
+  #   * building src-tauri on Linux would need webkit2gtk, and this leg does not
+  #     build an app at all - it ships a runtime payload and an installer script.
+  # flavor.txt says "wsl", not "fat", so this artefact is structurally unable to
+  # satisfy or disturb the pull script's windows-AND-mac fat publishing gate.
+  linux-wsl:
+    needs: gate
+    if: needs.gate.outputs.build == 'true' && needs.gate.outputs.fat == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          repository: Generis-Group/Agentic-OS
+          ref: ${{ needs.gate.outputs.src_sha }}
+          ssh-key: ${{ secrets.SOURCE_DEPLOY_KEY }}
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.12'
+
+      - name: Restore runtime cache
+        id: rtcache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: brain-runtime
+          key: brain-runtime-linux-wsl-${{ hashFiles('scripts/runtime/pins.json') }}
+
+      # The linux Ollama asset is a 1.4 GB .tar.zst; fetch_runtime shells out to
+      # zstd for it, so fail here and loudly if the runner ever loses the tool.
+      - name: Fetch runtime (pinned, sha256-verified)
+        if: steps.rtcache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          python --version
+          zstd --version
+          df -h / | tail -1
+          python scripts/runtime/fetch_runtime.py --os linux --out brain-runtime --cache "$RUNNER_TEMP/rt-dl"
+
+      # The target is a 181-package Debian trixie rootfs with no libgomp.so.1 and
+      # a password-gated sudo, so anything the runners resolve for free has to be
+      # carried in the payload. Both container steps use debian:trixie-slim
+      # because the runner's own Ubuntu image would mask exactly what we are
+      # looking for.
+      - name: Vendor libraries a bare Debian trixie cannot resolve
+        run: |
+          set -euo pipefail
+          docker run --rm -v "$PWD/brain-runtime:/payload" -v "$PWD/scripts/wsl:/scripts:ro" \
+            debian:trixie-slim bash /scripts/vendor_libs.sh /payload
+          sudo chown -R "$(id -u):$(id -g)" brain-runtime
+
+      - name: Rebuild the manifest over the vendored tree
+        run: python scripts/runtime/fetch_runtime.py --manifest-only brain-runtime --os linux
+
+      - name: ldd sweep on a clean Debian trixie
+        run: |
+          set -euo pipefail
+          docker run --rm -v "$PWD/brain-runtime:/payload:ro" -v "$PWD/scripts/wsl:/scripts:ro" \
+            debian:trixie-slim bash /scripts/ldd_sweep.sh /payload
+
+      # Runs on a cache hit too: a restored tree is re-hashed before it ships.
+      - name: Verify runtime tree
+        run: python scripts/runtime/fetch_runtime.py --verify-only brain-runtime
+
+      - name: Assemble the tarball tree
+        run: |
+          set -euo pipefail
+          rm -rf dist && mkdir -p dist/generis-brain-wsl
+          cp -a brain-runtime/. dist/generis-brain-wsl/
+          cp scripts/wsl/install.sh dist/generis-brain-wsl/install.sh
+          chmod 0755 dist/generis-brain-wsl/install.sh
+          echo "${{ needs.gate.outputs.version }}" > dist/generis-brain-wsl/VERSION
+          ls -la dist/generis-brain-wsl
+
+      - name: Pack and floor-check
+        run: |
+          set -euo pipefail
+          tar czf dist/GenerisBrain-linux-x64-wsl.tar.gz -C dist generis-brain-wsl
+          s="$(stat -c%s dist/GenerisBrain-linux-x64-wsl.tar.gz)"
+          echo "tarball: $s bytes"
+          [ "$s" -gt 200000000 ] || { echo "::error::wsl tarball under the 200 MB floor - the runtime did not get in"; exit 1; }
+          echo wsl > dist/flavor.txt
+          echo "${{ needs.gate.outputs.version }}" > dist/version.txt
+          echo "${{ needs.gate.outputs.src_sha }}" > dist/src_sha.txt
+          cp brain-runtime/manifest.json dist/runtime-manifest.json
+          ls -la dist
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: linux-wsl-bundle
+          path: |
+            dist/GenerisBrain-linux-x64-wsl.tar.gz
+            dist/flavor.txt
+            dist/version.txt
+            dist/src_sha.txt
+            dist/runtime-manifest.json
+          retention-days: 3
           if-no-files-found: error
