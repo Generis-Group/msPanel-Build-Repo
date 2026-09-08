@@ -14,6 +14,13 @@
 # sha256-verified in CI and again by the app. First fat run: 34168511755.
 # The macOS FAT artefact is a .dmg (drag to Applications, no admin password);
 # the Windows FAT artefact is the NSIS setup exe. Since 0.28.0 (2026-09-08).
+# Both macOS artefacts are ad-hoc SIGNED AND SEALED (bundle.macOS.signingIdentity
+# "-" in the source's tauri.conf.json makes Tauri run Apple's codesign on the
+# main binary and then the .app before it tars/dmgs it). A linker-signed-only
+# bundle (no _CodeSignature) is what macOS 26 calls "damaged" on first open.
+# Both mac legs gate on `codesign --verify --deep --strict` of the app inside
+# the FINAL artefact (tar.gz / dmg), and the fat leg re-verifies the runtime
+# manifest inside the sealed bundle. Since 0.29.0 (2026-09-08).
 #
 # SECURITY MODEL (do not weaken):
 #   - Secrets in THIS repo: SOURCE_TOKEN (fine-grained PAT, Agentic-OS only,
@@ -203,6 +210,29 @@ jobs:
         # The old mesh LaunchDaemon .pkg is gone with the mesh strip.
         run: pnpm tauri build --bundles app
 
+      # HARD GATE: the updater artefact must carry a sealed ad-hoc signature.
+      # Verified on the app extracted from the .app.tar.gz that ships, not on
+      # the build dir. spctl is expected to say "rejected" (no Developer ID);
+      # it is recorded, not gated.
+      - name: Verify code signature (macos, slim)
+        if: matrix.os == 'macos-latest' && matrix.flavor == 'slim'
+        shell: bash
+        run: |
+          set -euo pipefail
+          TGZ="$(ls target/release/bundle/macos/*.app.tar.gz)"
+          X="$RUNNER_TEMP/sigcheck"; rm -rf "$X"; mkdir -p "$X"
+          tar -xzf "$TGZ" -C "$X"
+          APP="$X/Generis Brain.app"
+          [ -d "$APP" ] || { echo "::error::$TGZ has no Generis Brain.app at its root"; ls -la "$X"; exit 1; }
+          echo "== codesign --verify --deep --strict (extracted from $TGZ)"
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          codesign -dv --verbose=2 "$APP" 2>&1 | tee "$RUNNER_TEMP/sig.txt" | grep -E "^(Identifier|CodeDirectory|Signature|Sealed)"
+          grep -q "^Sealed Resources version=2" "$RUNNER_TEMP/sig.txt" || { echo "::error::no sealed resources in the updater app"; exit 1; }
+          grep -q "linker-signed" "$RUNNER_TEMP/sig.txt" && { echo "::error::updater app is still linker-signed only"; exit 1; }
+          echo "== spctl (informational; no Developer ID so 'rejected' is the expected verdict)"
+          spctl --assess --type execute -vv "$APP" 2>&1 || echo "spctl rc=$? (recorded, not gated)"
+          rm -rf "$X"
+
       # FAT builds merge src-tauri/tauri.fat.conf.json on top of the base
       # config: it adds bundle.resources = brain-runtime/, nothing else.
       - name: Build (windows, fat)
@@ -247,6 +277,31 @@ jobs:
           fi
           hdiutil imageinfo "$OUT" | grep -E "Format:|Compressed Bytes|Total Bytes" || true
           codesign -dv "$APP" 2>&1 | grep -E "Signature|Identifier" || true
+
+      # HARD GATE: the app inside the staged .dmg must verify sealed, and the
+      # sealed bundle's brain-runtime must still match its manifest byte for
+      # byte (the first-run seed refuses the payload otherwise). Sealing hashes
+      # the runtime files; it must never rewrite them.
+      - name: Verify code signature + runtime manifest (macos, fat)
+        if: matrix.os == 'macos-latest' && matrix.flavor == 'fat' && needs.gate.outputs.fat == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          DMG="$(ls stage/*-fat.dmg)"
+          MNT="$RUNNER_TEMP/dmgmnt"; mkdir -p "$MNT"
+          trap 'hdiutil detach "$MNT" -quiet || true' EXIT
+          hdiutil attach -nobrowse -readonly -noautoopen -mountpoint "$MNT" "$DMG" | tail -1
+          APP="$MNT/Generis Brain.app"
+          echo "== codesign --verify --deep --strict (inside $DMG)"
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          codesign -dv --verbose=2 "$APP" 2>&1 | tee "$RUNNER_TEMP/sig.txt" | grep -E "^(Identifier|CodeDirectory|Signature|Sealed)"
+          grep -q "^Sealed Resources version=2" "$RUNNER_TEMP/sig.txt" || { echo "::error::no sealed resources in the dmg app"; exit 1; }
+          grep -q "linker-signed" "$RUNNER_TEMP/sig.txt" && { echo "::error::dmg app is still linker-signed only"; exit 1; }
+          echo "== runtime manifest inside the sealed bundle"
+          cmp "$APP/Contents/Resources/brain-runtime/manifest.json" src-tauri/brain-runtime/manifest.json
+          python scripts/runtime/fetch_runtime.py --verify-only "$APP/Contents/Resources/brain-runtime"
+          echo "== spctl (informational; no Developer ID so 'rejected' is the expected verdict)"
+          spctl --assess --type execute -vv "$APP" 2>&1 || echo "spctl rc=$? (recorded, not gated)"
 
       # Stage ONLY what the droplet needs. Explicitly NO .sig files — the
       # throwaway-key signatures must never leave the runner.
