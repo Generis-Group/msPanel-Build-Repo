@@ -12,6 +12,8 @@
 # website's Get-the-app installers). FAT artefacts carry the pinned local-brain
 # runtime (scripts/runtime/pins.json in the source repo); every download is
 # sha256-verified in CI and again by the app. First fat run: 34168511755.
+# The macOS FAT artefact is a .dmg (drag to Applications, no admin password);
+# the Windows FAT artefact is the NSIS setup exe. Since 0.28.0 (2026-09-08).
 #
 # SECURITY MODEL (do not weaken):
 #   - Secrets in THIS repo: SOURCE_TOKEN (fine-grained PAT, Agentic-OS only,
@@ -219,14 +221,32 @@ jobs:
           GENERIS_DESKTOP_SECRET: ${{ secrets.GENERIS_DESKTOP_SECRET }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ runner.temp }}/throwaway.key
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ''
-        # The website's mac Get-the-app slot serves an unsigned .pkg, built by
-        # the same script Matt used by hand (pkgbuild + productbuild, no daemon).
+        # The website's mac Get-the-app slot serves an ad-hoc-signed .dmg
+        # (drag to Applications or ~/Applications — no admin password, which a
+        # .pkg into /Applications needs; OQ-1). Tauri's dmg bundler first; if
+        # it fails on the runner (Finder/AppleScript layout step), fall back to
+        # a plain hdiutil image of the .app it already built. The log says which.
         run: |
-          set -euo pipefail
-          pnpm tauri build --bundles app --config src-tauri/tauri.fat.conf.json
+          set -uo pipefail
           mkdir -p stage
-          MSPANEL_PKG_OUT="$PWD/stage/Generis Brain_${{ needs.gate.outputs.version }}_aarch64-fat.pkg" \
-            bash src-tauri/installer/mac/build-pkg-unsigned.sh
+          OUT="$PWD/stage/Generis Brain_${{ needs.gate.outputs.version }}_aarch64-fat.dmg"
+          pnpm tauri build --bundles dmg --config src-tauri/tauri.fat.conf.json; rc=$?
+          DMG="$(ls target/release/bundle/dmg/*.dmg 2>/dev/null | head -1 || true)"
+          APP="target/release/bundle/macos/Generis Brain.app"
+          if [ "$rc" -eq 0 ] && [ -n "$DMG" ]; then
+            echo "dmg: tauri bundler ok -> $DMG"
+            cp "$DMG" "$OUT"
+          else
+            echo "::warning::tauri dmg bundler failed (rc=$rc, dmg='$DMG') - falling back to hdiutil"
+            [ -d "$APP" ] || { echo "no .app was built either"; exit 1; }
+            rm -rf dmgroot && mkdir dmgroot
+            ditto "$APP" "dmgroot/Generis Brain.app"
+            ln -s /Applications dmgroot/Applications
+            hdiutil create -volname "Generis Brain" -srcfolder dmgroot -ov -format UDZO "$OUT"
+            echo "dmg: hdiutil fallback ok -> $OUT"
+          fi
+          hdiutil imageinfo "$OUT" | grep -E "Format:|Compressed Bytes|Total Bytes" || true
+          codesign -dv "$APP" 2>&1 | grep -E "Signature|Identifier" || true
 
       # Stage ONLY what the droplet needs. Explicitly NO .sig files — the
       # throwaway-key signatures must never leave the runner.
@@ -254,7 +274,7 @@ jobs:
             # A fat artefact under 200 MB means the runtime resources did not get in.
             python - <<'EOF'
           import glob, os, sys
-          f = [p for p in glob.glob('stage/*') if p.endswith(('-fat-setup.exe', '-fat.pkg'))]
+          f = [p for p in glob.glob('stage/*') if p.endswith(('-fat-setup.exe', '-fat.dmg'))]
           assert f, 'no fat artefact staged'
           s = os.path.getsize(f[0]); print(f[0], s)
           sys.exit(0 if s > 200_000_000 else 1)
